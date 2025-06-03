@@ -1,3 +1,12 @@
-# Data Ingestion
+# Data Ingestion & Synthetic Data Generator
 
-Modules for pulling data from SAP, CSV files, NFC readers, and validating against business rules.
+This folder contains scripts for generating synthetic data for development and testing.
+
+## Files
+
+- `data_generator.py` — Populates the database with sample products, batches, transactions, etc.
+
+## Usage
+
+Run the generator to create test data:
+
