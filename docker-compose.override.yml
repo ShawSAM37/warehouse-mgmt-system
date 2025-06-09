@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  backend:
+    volumes:
+      - ./src:/app/src:ro
+      - ./logs:/app/logs
+    environment:
+      ENVIRONMENT: development
+      LOG_LEVEL: debug
+      RELOAD: true
+    command: ["uvicorn", "wms.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--log-level", "debug"]
+
+  frontend:
+    volumes:
+      - ./src/wms/dashboard:/app:ro
+    environment:
+      STREAMLIT_SERVER_RUN_ON_SAVE: true
+      STREAMLIT_SERVER_FILE_WATCHER_TYPE: poll
+
+  db:
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_LOG_STATEMENT: all
+      POSTGRES_LOG_MIN_DURATION_STATEMENT: 0
+
+  redis:
+    ports:
+      - "6379:6379"
