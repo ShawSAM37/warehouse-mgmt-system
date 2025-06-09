@@ -1,0 +1,418 @@
+Based on the Claude 4.0 Sonnet capabilities and your anomaly detection development pipeline, here are comprehensive prompts for each phase:
+
+---
+
+## **Phase 1: Foundation & Data Pipeline (Days 1-3)**
+
+```
+You are an expert Python developer and data scientist building an enterprise-grade anomaly detection system for a Warehouse Management System. Using Claude 4.0 Sonnet's code execution capabilities, develop the foundation components.
+
+**PROJECT CONTEXT:**
+- WMS with FastAPI backend, SQLAlchemy ORM, PostgreSQL database
+- Existing modules: authentication, authorization, forecasting, inventory models
+- Need to detect anomalies in inventory consumption, stockouts, supplier performance
+
+**TASK 1: Create the base anomaly detection service**
+
+Generate complete code for `src/wms/ml/anomaly.py` with:
+
+1. **Base Infrastructure:**
+   - AnomalyDetectionService class with proper initialization
+   - Integration with existing database session management
+   - Redis cache integration for performance
+
+2. **Data Loading Pipeline:**
+   - Method to load inventory transaction data using SQLAlchemy
+   - Integration with existing InventoryTransaction model
+   - Data validation and preprocessing
+
+3. **Feature Engineering Foundation:**
+   - WMS-specific features (consumption_rate, delivery_variance, stock_velocity)
+   - Temporal features (seasonality, day_of_week, month_start)
+   - Rolling statistics and lag features
+
+**Requirements:**
+- Follow existing project patterns from utils/db.py and utils/cache.py
+- Include comprehensive logging and error handling
+- Add type hints and docstrings
+- Make it compatible with the forecasting module
+
+Execute the code to validate imports and basic functionality. Create test data if needed to demonstrate the data loading pipeline.
+```
+
+---
+
+## **Phase 2: Core Detection Algorithms (Days 4-7)**
+
+```
+Building on the foundation from Phase 1, implement the core anomaly detection algorithms. Use Claude's code execution to test and validate each algorithm.
+
+**TASK 2: Implement multi-algorithm detection system**
+
+Develop and test the following detection methods:
+
+1. **Statistical Detection Methods:**
+   - Z-score anomaly detection with configurable thresholds
+   - IQR-based outlier detection
+   - Grubbs' test for extreme outliers
+   - Time series decomposition (STL) for seasonal anomalies
+
+2. **Machine Learning Detection:**
+   - Isolation Forest for general anomaly detection
+   - Local Outlier Factor (LOF) for density-based detection
+   - One-Class SVM for boundary-based detection
+   - Include hyperparameter tuning and cross-validation
+
+3. **Forecast-Based Detection:**
+   - Integration with existing ForecastingService
+   - Residual analysis from Prophet/SARIMAX predictions
+   - Confidence interval violation detection
+   - Prediction error spike detection
+
+**Code Execution Tasks:**
+- Generate synthetic time series data with known anomalies
+- Test each algorithm on the synthetic data
+- Compare detection accuracy and performance
+- Visualize detection results using matplotlib
+
+**Requirements:**
+- Handle missing dependencies gracefully (Prophet, XGBoost may not be available)
+- Implement fallback algorithms
+- Include performance benchmarks
+- Add configuration for threshold tuning
+
+Execute code to validate each algorithm and generate comparison charts.
+```
+
+---
+
+## **Phase 3: Multi-Algorithm Ensemble (Days 8-10)**
+
+```
+Create an ensemble system that combines multiple detection algorithms for robust anomaly detection.
+
+**TASK 3: Build ensemble detection system**
+
+Implement:
+
+1. **Consensus Voting System:**
+   - Weighted voting mechanism for multiple algorithms
+   - Dynamic weight adjustment based on algorithm performance
+   - Confidence scoring for ensemble decisions
+
+2. **Severity Classification:**
+   - Multi-level severity system (Critical, High, Medium, Low)
+   - Business impact assessment
+   - Configurable thresholds per severity level
+
+3. **Algorithm Selection Logic:**
+   - Automatic best algorithm selection based on data characteristics
+   - Performance monitoring and algorithm switching
+   - Fallback mechanisms for algorithm failures
+
+**Code Execution Tasks:**
+- Create test scenarios with different anomaly types
+- Test ensemble voting with conflicting algorithm results
+- Generate severity distribution analysis
+- Benchmark ensemble vs individual algorithms
+
+**Implementation Details:**
+```
+class EnsembleAnomalyDetector:
+    def __init__(self):
+        self.algorithms = {
+            'statistical': StatisticalDetector(),
+            'isolation_forest': MLDetector(),
+            'forecast_based': ForecastDetector()
+        }
+        self.weights = self.calculate_dynamic_weights()
+    
+    def ensemble_detect(self, data):
+        # Implement weighted consensus voting
+        pass
+```
+
+Execute comprehensive testing with various data patterns and visualize ensemble performance.
+```
+
+---
+
+## **Phase 4: Real-Time Integration (Days 11-13)**
+
+```
+Implement real-time anomaly detection capabilities for operational warehouse monitoring.
+
+**TASK 4: Build streaming anomaly detection pipeline**
+
+Develop:
+
+1. **Real-Time Processing Pipeline:**
+   - Redis-based streaming transaction processor
+   - Async anomaly detection for high throughput
+   - Event-driven anomaly scoring
+
+2. **Alert Management System:**
+   - Integration with existing FastAPI alert endpoints
+   - Severity-based alert routing
+   - Rate limiting and alert fatigue prevention
+   - Alert deduplication and aggregation
+
+3. **Performance Optimization:**
+   - Model caching strategies
+   - Feature extraction optimization
+   - Batch processing for efficiency
+
+**Code Execution Tasks:**
+- Simulate real-time transaction stream
+- Test processing latency (1000 transactions/sec)
+- Test alert triggering and rate limiting
+
+**Implementation:**
+```
+class RealTimeAnomalyMonitor:
+    async def process_transaction_stream(self):
+        while True:
+            transaction = await self.redis.xread(...)
+            anomaly_score = await self.detect_anomaly(transaction)
+            if anomaly_score > threshold:
+                await self.trigger_alert(transaction, anomaly_score)
+```
+
+Execute performance benchmarks and validate real-time capabilities.
+```
+
+---
+
+## **Phase 5: Explainability & Audit (Days 14-16)**
+
+```
+Add explainability and audit capabilities for compliance and debugging.
+
+**TASK 5: Implement explainable anomaly detection**
+
+Build:
+
+1. **SHAP Integration:**
+   - Feature importance explanation for ML models
+   - Anomaly contribution analysis
+   - Visual explanation generation
+
+2. **Audit Trail System:**
+   - Complete logging of all anomaly decisions
+   - Model version tracking
+   - Decision metadata storage
+   - Compliance reporting capabilities
+
+3. **Explanation Interface:**
+   - Human-readable anomaly explanations
+   - Feature contribution summaries
+   - Historical trend context
+
+**Code Execution Tasks:**
+- Install and test SHAP library
+- Generate explanation visualizations
+- Test audit logging functionality
+- Create sample compliance reports
+
+**Implementation:**
+```
+import shap
+
+class AnomalyExplainer:
+    def __init__(self, model):
+        self.explainer = shap.TreeExplainer(model)
+    
+    def explain_anomaly(self, instance):
+        shap_values = self.explainer.shap_values(instance)
+        return self.format_explanation(shap_values)
+```
+
+Execute explanation generation and validate audit trail completeness.
+```
+
+---
+
+## **Phase 6: Model Management & MLOps (Days 17-19)**
+
+```
+Implement production-grade model management and MLOps capabilities.
+
+**TASK 6: Build MLOps infrastructure**
+
+Develop:
+
+1. **Model Persistence & Versioning:**
+   - Model serialization with metadata
+   - Version control and rollback capabilities
+   - Model performance tracking over time
+
+2. **Drift Detection:**
+   - Statistical drift detection (KS test, Chi-square)
+   - Performance degradation monitoring
+   - Automatic retraining triggers
+
+3. **Model Health Monitoring:**
+   - Prediction quality metrics
+   - Feature distribution monitoring
+   - Model serving health checks
+
+**Code Execution Tasks:**
+- Test model saving/loading functionality
+- Simulate data drift scenarios
+- Validate automatic retraining triggers
+- Generate model health dashboards
+
+**Implementation:**
+```
+class ModelManager:
+    def save_model_with_metadata(self, model, performance_metrics):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        model_path = f"models/anomaly_v{timestamp}.joblib"
+        joblib.dump(model, model_path)
+        self.save_metadata(model_path, performance_metrics)
+    
+    def detect_drift(self, current_data, reference_data):
+        # Implement drift detection logic
+        pass
+```
+
+Execute drift detection tests and validate model management workflows.
+```
+
+---
+
+## **Phase 7: Testing & Validation (Days 20-22)**
+
+```
+Create comprehensive test suites for the anomaly detection system.
+
+**TASK 7: Implement complete testing framework**
+
+Build:
+
+1. **Unit Tests:**
+   - Individual algorithm testing
+   - Feature engineering validation
+   - Ensemble logic verification
+   - Error handling testing
+
+2. **Integration Tests:**
+   - End-to-end pipeline testing
+   - Database integration validation
+   - Real-time processing tests
+   - API endpoint testing
+
+3. **Performance Tests:**
+   - Latency benchmarks
+   - Throughput validation
+   - Memory usage profiling
+   - Scalability testing
+
+**Code Execution Tasks:**
+- Generate comprehensive test data sets
+- Run full test suite with coverage analysis
+- Execute performance benchmarks
+- Validate all edge cases
+
+**Test Structure:**
+```
+# File: src/wms/tests/unit/test_anomaly.py
+class TestAnomalyDetection:
+    def test_isolation_forest_detection(self):
+        # Test synthetic data with known anomalies
+        pass
+    
+    def test_ensemble_voting(self):
+        # Test consensus mechanism
+        pass
+    
+    def test_real_time_processing(self):
+        # Test streaming pipeline
+        pass
+```
+
+Execute all tests and generate coverage reports.
+```
+
+---
+
+## **Phase 8: API Integration & Documentation (Days 23-25)**
+
+```
+Complete the system with API endpoints and comprehensive documentation.
+
+**TASK 8: Finalize API integration and documentation**
+
+Implement:
+
+1. **FastAPI Endpoints:**
+   - Batch anomaly detection endpoint
+   - Real-time monitoring endpoints
+   - Model management endpoints
+   - Health check and status endpoints
+
+2. **Streamlit Dashboard Integration:**
+   - Real-time anomaly monitoring dashboard
+   - Model performance visualization
+   - Alert management interface
+   - Historical trend analysis
+
+3. **Complete Documentation:**
+   - API documentation with examples
+   - User guide for dashboard
+   - Model explanation documentation
+   - Deployment and configuration guide
+
+**Code Execution Tasks:**
+- Test all API endpoints
+- Generate OpenAPI documentation
+- Create dashboard mockups
+- Validate end-to-end workflows
+
+**Final Implementation:**
+```
+# API Endpoints
+@router.post("/anomaly/detect/batch")
+async def detect_batch_anomalies(request: BatchAnomalyRequest):
+    service = AnomalyDetectionService()
+    return await service.detect_batch(request.data)
+
+@router.get("/anomaly/status")
+async def get_anomaly_status():
+    return AnomalyDetectionService.get_system_status()
+
+# Dashboard Integration
+def render_anomaly_dashboard():
+    st.title("WMS Anomaly Detection Dashboard")
+    # Real-time metrics
+    # Alert feed
+    # Model performance charts
+```
+
+Execute final integration tests and generate complete project documentation.
+```
+
+---
+
+## **Execution Strategy for Claude 4.0 Sonnet**
+
+**Use these commands to execute each phase:**
+
+1. **Start each prompt with:** "Execute this code using Claude 4.0 Sonnet's code execution tool"
+2. **Include the beta header:** `anthropic-beta: code-execution-2025-05-22`
+3. **Request file outputs:** Ask Claude to save code files, test results, and documentation
+4. **Iterative development:** Use streaming responses to see real-time progress
+5. **Validation:** Request execution of tests and benchmarks for each component
+
+Each prompt is designed to leverage Claude 4.0 Sonnet's code execution, file handling, and streaming capabilities to build a production-ready anomaly detection system over the 25-day development timeline.
+
+[1] https://www.datacamp.com/tutorial/claude-sonnet-4
+[2] https://www.prompthub.us/blog/an-analysis-of-the-claude-4-system-prompt
+[3] https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/claude-4-best-practices
+[4] https://simonwillison.net/2025/May/25/claude-4-system-prompt/
+[5] https://www.prompthub.us/blog/the-complete-guide-to-claude-opus-4-and-claude-sonnet-4
+[6] https://www.anthropic.com/news/claude-4
+[7] https://github.com/johe123qwe/github-trending?search=1
+[8] https://aimlapi.com/models/claude-4-sonnet
+[9] https://citeseerx.ist.psu.edu/document?repid=rep1&amp%3Btype=pdf&amp%3Bdoi=344256f3ae384d9024d86442fa4ce680a77f03e0
+[10] https://github.com/ZonghaoLi777/githubTrending
