@@ -67,6 +67,12 @@ services:
       RATE_LIMIT_WINDOW: ${RATE_LIMIT_WINDOW:-60}
       ENVIRONMENT: ${ENVIRONMENT:-production}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # ML-specific environment variables
+      ML_MODEL_STORAGE_PATH: /app/models
+      FORECAST_DEFAULT_HORIZON: ${FORECAST_DEFAULT_HORIZON:-30}
+      ANOMALY_DETECTION_THRESHOLD: ${ANOMALY_DETECTION_THRESHOLD:-2.5}
+      MODEL_RETRAIN_FREQUENCY: ${MODEL_RETRAIN_FREQUENCY:-weekly}
+      ALERT_NOTIFICATION_WEBHOOK: ${ALERT_NOTIFICATION_WEBHOOK}
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
@@ -77,6 +83,9 @@ services:
     networks:
       - wms-network
     restart: unless-stopped
+    volumes:
+      - ml_models:/app/models
+      - ml_logs:/app/logs
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -86,9 +95,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: 2G
         reservations:
-          memory: 512M
+          memory: 1G
     logging:
       driver: "json-file"
       options:
@@ -127,10 +136,114 @@ services:
         reservations:
           memory: 256M
 
+  # NEW: ML Worker Service
+  ml-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wms-ml-worker
+    command: ["python", "-m", "src.wms.ml.scheduler"]
+    environment:
+      DATABASE_URL: postgresql://${DB_USER:-wms}:${DB_PASSWORD:-wms_secure_pass}@db:5432/${DB_NAME:-wms_db}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_secure_pass}@redis:6379/0
+      ML_WORKER_MODE: "true"
+      MODEL_RETRAIN_SCHEDULE: ${MODEL_RETRAIN_SCHEDULE:-0 2 * * *}
+      ML_MODEL_STORAGE_PATH: /app/models
+      ML_LOG_STORAGE_PATH: /app/logs
+      FORECAST_DEFAULT_HORIZON: ${FORECAST_DEFAULT_HORIZON:-30}
+      ANOMALY_DETECTION_THRESHOLD: ${ANOMALY_DETECTION_THRESHOLD:-2.5}
+      MODEL_RETRAIN_FREQUENCY: ${MODEL_RETRAIN_FREQUENCY:-weekly}
+      ANOMALY_CHECK_FREQUENCY: ${ANOMALY_CHECK_FREQUENCY:-hourly}
+      PERFORMANCE_MONITOR_FREQUENCY: ${PERFORMANCE_MONITOR_FREQUENCY:-daily}
+      ALERT_NOTIFICATION_WEBHOOK: ${ALERT_NOTIFICATION_WEBHOOK}
+      RMSE_DEGRADATION_THRESHOLD: ${RMSE_DEGRADATION_THRESHOLD:-1.5}
+      ACCURACY_DEGRADATION_THRESHOLD: ${ACCURACY_DEGRADATION_THRESHOLD:-0.1}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - wms-network
+    restart: unless-stopped
+    volumes:
+      - ml_models:/app/models
+      - ml_logs:/app/logs
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # NEW: Prometheus Monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: wms-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - wms-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+  # NEW: Grafana Dashboard
+  grafana:
+    image: grafana/grafana:latest
+    container_name: wms-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - wms-network
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+
 volumes:
   postgres_data:
     driver: local
   redis_data:
+    driver: local
+  ml_models:
+    driver: local
+  ml_logs:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
     driver: local
 
 networks:
