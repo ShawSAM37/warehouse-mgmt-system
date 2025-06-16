@@ -1,0 +1,395 @@
+"""
+WMS ML Background Job Scheduler
+==============================
+
+Production-grade scheduler for ML model management, retraining, and monitoring.
+Handles automated model updates and performance tracking.
+"""
+
+import asyncio
+import logging
+import schedule
+import time
+import os
+import json
+from datetime import datetime, timedelta
+from typing import Dict, List, Any, Optional
+from pathlib import Path
+
+import redis
+from sqlalchemy.orm import Session
+
+# Project imports
+from src.wms.utils.db import get_db
+from src.wms.utils.cache import CacheManager
+from src.wms.ml.forecasting import ForecastingService, batch_forecast
+from src.wms.ml.anomaly import AnomalyDetectionService, batch_anomaly_detection
+from src.wms.inventory.models import Product
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+class MLSchedulerConfig:
+    """Configuration for ML scheduler."""
+    
+    MODEL_RETRAIN_FREQUENCY = os.getenv("MODEL_RETRAIN_FREQUENCY", "weekly")
+    ANOMALY_CHECK_FREQUENCY = os.getenv("ANOMALY_CHECK_FREQUENCY", "hourly")
+    PERFORMANCE_MONITOR_FREQUENCY = os.getenv("PERFORMANCE_MONITOR_FREQUENCY", "daily")
+    
+    # Thresholds for automated actions
+    RMSE_DEGRADATION_THRESHOLD = float(os.getenv("RMSE_DEGRADATION_THRESHOLD", "1.5"))
+    ACCURACY_DEGRADATION_THRESHOLD = float(os.getenv("ACCURACY_DEGRADATION_THRESHOLD", "0.1"))
+    
+    # Storage paths
+    MODEL_STORAGE_PATH = Path(os.getenv("ML_MODEL_STORAGE_PATH", "/app/models"))
+    LOG_STORAGE_PATH = Path(os.getenv("ML_LOG_STORAGE_PATH", "/app/logs"))
+    
+    # Redis configuration
+    REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+class MLJobScheduler:
+    """Main ML job scheduler for automated model management."""
+    
+    def __init__(self):
+        self.config = MLSchedulerConfig()
+        self.cache = CacheManager()
+        self.redis_client = redis.from_url(self.config.REDIS_URL)
+        self.running = False
+        
+        # Ensure storage directories exist
+        self.config.MODEL_STORAGE_PATH.mkdir(parents=True, exist_ok=True)
+        self.config.LOG_STORAGE_PATH.mkdir(parents=True, exist_ok=True)
+    
+    def start(self):
+        """Start the scheduler with all configured jobs."""
+        logger.info("Starting ML Job Scheduler...")
+        
+        # Schedule model retraining
+        if self.config.MODEL_RETRAIN_FREQUENCY == "daily":
+            schedule.every().day.at("02:00").do(self.retrain_all_models)
+        elif self.config.MODEL_RETRAIN_FREQUENCY == "weekly":
+            schedule.every().sunday.at("02:00").do(self.retrain_all_models)
+        elif self.config.MODEL_RETRAIN_FREQUENCY == "monthly":
+            schedule.every().month.do(self.retrain_all_models)
+        
+        # Schedule anomaly checks
+        if self.config.ANOMALY_CHECK_FREQUENCY == "hourly":
+            schedule.every().hour.do(self.run_anomaly_detection)
+        elif self.config.ANOMALY_CHECK_FREQUENCY == "daily":
+            schedule.every().day.at("06:00").do(self.run_anomaly_detection)
+        
+        # Schedule performance monitoring
+        schedule.every().day.at("01:00").do(self.monitor_model_performance)
+        
+        # Schedule cleanup tasks
+        schedule.every().day.at("03:00").do(self.cleanup_old_models)
+        
+        self.running = True
+        logger.info("ML Job Scheduler started successfully")
+        
+        # Main scheduler loop
+        while self.running:
+            schedule.run_pending()
+            time.sleep(60)  # Check every minute
+    
+    def stop(self):
+        """Stop the scheduler."""
+        logger.info("Stopping ML Job Scheduler...")
+        self.running = False
+    
+    def retrain_all_models(self):
+        """Retrain all forecasting models for active products."""
+        logger.info("Starting automated model retraining...")
+        
+        try:
+            # Get list of active products
+            db = next(get_db())
+            active_products = db.query(Product).filter(Product.is_active == True).all()
+            product_codes = [product.product_code for product in active_products]
+            
+            logger.info(f"Retraining models for {len(product_codes)} products")
+            
+            # Track retraining results
+            results = {
+                'started_at': datetime.now().isoformat(),
+                'total_products': len(product_codes),
+                'successful': 0,
+                'failed': 0,
+                'errors': []
+            }
+            
+            # Retrain forecasting models
+            for product_code in product_codes:
+                try:
+                    logger.info(f"Retraining forecast model for {product_code}")
+                    
+                    service = ForecastingService(product_code)
+                    forecast_result = service.forecast(retrain=True)
+                    
+                    # Store model performance metrics
+                    self._store_model_metrics(product_code, forecast_result)
+                    
+                    results['successful'] += 1
+                    logger.info(f"Successfully retrained model for {product_code}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to retrain model for {product_code}: {e}")
+                    results['failed'] += 1
+                    results['errors'].append({
+                        'product_code': product_code,
+                        'error': str(e)
+                    })
+            
+            # Store retraining results
+            results['completed_at'] = datetime.now().isoformat()
+            self._store_retraining_results(results)
+            
+            logger.info(f"Model retraining completed: {results['successful']} successful, {results['failed']} failed")
+            
+        except Exception as e:
+            logger.error(f"Model retraining failed: {e}")
+    
+    def run_anomaly_detection(self):
+        """Run anomaly detection for all products."""
+        logger.info("Starting automated anomaly detection...")
+        
+        try:
+            # Get list of active products
+            db = next(get_db())
+            active_products = db.query(Product).filter(Product.is_active == True).all()
+            product_codes = [product.product_code for product in active_products]
+            
+            # Run batch anomaly detection
+            anomaly_results = batch_anomaly_detection(product_codes)
+            
+            # Process and store results
+            total_anomalies = 0
+            critical_anomalies = 0
+            
+            for product_code, result in anomaly_results.items():
+                if 'error' not in result:
+                    anomalies = result.get('anomalies', [])
+                    total_anomalies += len(anomalies)
+                    
+                    # Count critical anomalies
+                    critical_count = sum(1 for a in anomalies if a.get('severity') == 'critical')
+                    critical_anomalies += critical_count
+                    
+                    # Store anomaly results
+                    self._store_anomaly_results(product_code, result)
+            
+            # Send alerts for critical anomalies
+            if critical_anomalies > 0:
+                self._send_critical_anomaly_alert(critical_anomalies, total_anomalies)
+            
+            logger.info(f"Anomaly detection completed: {total_anomalies} total anomalies, {critical_anomalies} critical")
+            
+        except Exception as e:
+            logger.error(f"Anomaly detection failed: {e}")
+    
+    def monitor_model_performance(self):
+        """Monitor model performance and trigger retraining if needed."""
+        logger.info("Starting model performance monitoring...")
+        
+        try:
+            # Get performance metrics for all models
+            performance_data = self._get_model_performance_metrics()
+            
+            models_to_retrain = []
+            
+            for product_code, metrics in performance_data.items():
+                current_rmse = metrics.get('current_rmse', 0)
+                baseline_rmse = metrics.get('baseline_rmse', 0)
+                
+                # Check if model performance has degraded
+                if baseline_rmse > 0 and current_rmse > baseline_rmse * self.config.RMSE_DEGRADATION_THRESHOLD:
+                    logger.warning(f"Model performance degraded for {product_code}: RMSE {current_rmse:.2f} vs baseline {baseline_rmse:.2f}")
+                    models_to_retrain.append(product_code)
+            
+            # Trigger retraining for degraded models
+            if models_to_retrain:
+                logger.info(f"Triggering retraining for {len(models_to_retrain)} degraded models")
+                self._trigger_emergency_retraining(models_to_retrain)
+            
+            # Store monitoring results
+            monitoring_result = {
+                'timestamp': datetime.now().isoformat(),
+                'total_models_checked': len(performance_data),
+                'degraded_models': len(models_to_retrain),
+                'models_to_retrain': models_to_retrain
+            }
+            
+            self._store_monitoring_results(monitoring_result)
+            
+        except Exception as e:
+            logger.error(f"Model performance monitoring failed: {e}")
+    
+    def cleanup_old_models(self):
+        """Clean up old model files and logs."""
+        logger.info("Starting cleanup of old models and logs...")
+        
+        try:
+            # Clean up model files older than 30 days
+            cutoff_date = datetime.now() - timedelta(days=30)
+            
+            model_files_cleaned = 0
+            for model_file in self.config.MODEL_STORAGE_PATH.glob("*.joblib"):
+                if datetime.fromtimestamp(model_file.stat().st_mtime) < cutoff_date:
+                    model_file.unlink()
+                    model_files_cleaned += 1
+            
+            # Clean up log files older than 7 days
+            log_cutoff_date = datetime.now() - timedelta(days=7)
+            log_files_cleaned = 0
+            
+            for log_file in self.config.LOG_STORAGE_PATH.glob("*.log"):
+                if datetime.fromtimestamp(log_file.stat().st_mtime) < log_cutoff_date:
+                    log_file.unlink()
+                    log_files_cleaned += 1
+            
+            logger.info(f"Cleanup completed: {model_files_cleaned} model files, {log_files_cleaned} log files removed")
+            
+        except Exception as e:
+            logger.error(f"Cleanup failed: {e}")
+    
+    def _store_model_metrics(self, product_code: str, forecast_result: Dict):
+        """Store model performance metrics in Redis."""
+        try:
+            metrics_key = f"model_metrics:{product_code}"
+            metrics_data = {
+                'timestamp': datetime.now().isoformat(),
+                'model_used': forecast_result.get('model_used'),
+                'rmse': forecast_result.get('model_metrics', {}).get('rmse'),
+                'mae': forecast_result.get('model_metrics', {}).get('mae'),
+                'mape': forecast_result.get('model_metrics', {}).get('mape')
+            }
+            
+            self.redis_client.setex(
+                metrics_key,
+                timedelta(days=30),
+                json.dumps(metrics_data)
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to store model metrics: {e}")
+    
+    def _store_retraining_results(self, results: Dict):
+        """Store retraining results in Redis."""
+        try:
+            results_key = f"retraining_results:{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            self.redis_client.setex(
+                results_key,
+                timedelta(days=7),
+                json.dumps(results)
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to store retraining results: {e}")
+    
+    def _store_anomaly_results(self, product_code: str, result: Dict):
+        """Store anomaly detection results in Redis."""
+        try:
+            anomaly_key = f"anomaly_results:{product_code}:{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            self.redis_client.setex(
+                anomaly_key,
+                timedelta(days=7),
+                json.dumps(result)
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to store anomaly results: {e}")
+    
+    def _store_monitoring_results(self, result: Dict):
+        """Store monitoring results in Redis."""
+        try:
+            monitoring_key = f"monitoring_results:{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            self.redis_client.setex(
+                monitoring_key,
+                timedelta(days=7),
+                json.dumps(result)
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to store monitoring results: {e}")
+    
+    def _get_model_performance_metrics(self) -> Dict[str, Dict]:
+        """Get current model performance metrics."""
+        try:
+            performance_data = {}
+            
+            # Get all model metrics from Redis
+            for key in self.redis_client.scan_iter(match="model_metrics:*"):
+                product_code = key.decode().split(":")[-1]
+                metrics_json = self.redis_client.get(key)
+                
+                if metrics_json:
+                    metrics = json.loads(metrics_json)
+                    performance_data[product_code] = {
+                        'current_rmse': metrics.get('rmse', 0),
+                        'baseline_rmse': 5.0,  # This would come from historical data
+                        'timestamp': metrics.get('timestamp')
+                    }
+            
+            return performance_data
+            
+        except Exception as e:
+            logger.error(f"Failed to get model performance metrics: {e}")
+            return {}
+    
+    def _trigger_emergency_retraining(self, product_codes: List[str]):
+        """Trigger emergency retraining for specific products."""
+        try:
+            for product_code in product_codes:
+                logger.info(f"Emergency retraining for {product_code}")
+                
+                service = ForecastingService(product_code)
+                result = service.forecast(retrain=True)
+                
+                # Store updated metrics
+                self._store_model_metrics(product_code, result)
+                
+        except Exception as e:
+            logger.error(f"Emergency retraining failed: {e}")
+    
+    def _send_critical_anomaly_alert(self, critical_count: int, total_count: int):
+        """Send alert for critical anomalies."""
+        try:
+            alert_webhook = os.getenv("ALERT_NOTIFICATION_WEBHOOK")
+            
+            if alert_webhook:
+                import requests
+                
+                message = {
+                    "text": f"🚨 Critical Anomaly Alert: {critical_count} critical anomalies detected out of {total_count} total anomalies",
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+                response = requests.post(alert_webhook, json=message, timeout=10)
+                response.raise_for_status()
+                
+                logger.info(f"Critical anomaly alert sent: {critical_count} critical anomalies")
+            
+        except Exception as e:
+            logger.error(f"Failed to send critical anomaly alert: {e}")
+
+def main():
+    """Main entry point for the ML scheduler."""
+    logger.info("Initializing ML Job Scheduler...")
+    
+    scheduler = MLJobScheduler()
+    
+    try:
+        scheduler.start()
+    except KeyboardInterrupt:
+        logger.info("Received shutdown signal")
+        scheduler.stop()
+    except Exception as e:
+        logger.error(f"Scheduler error: {e}")
+        scheduler.stop()
+
+if __name__ == "__main__":
+    main()
